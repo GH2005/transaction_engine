@@ -32,6 +32,8 @@ impl TryFrom<InputCsvRecord> for Transaction {
     type Error = Box<dyn Error>;
 
     /// This is input validation.
+    /// I can wrap the AmountType into another struct type to use the type system to ensure it's always positive
+    /// and always has at most 4 decimal positions, but it's likely an overkill.
     fn try_from(value: InputCsvRecord) -> Result<Self, Self::Error> {
         let verify_amount = |amount: Option<AmountType>| -> Result<AmountType, Self::Error> {
             match amount {
