@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 string-error = "0.1.0"
 csv = "1.1.6"
-rust_decimal = { version="1.25.0", features=["serde-with-str", "serde-str"] }
+rust_decimal = { version="1.25.0", features=["serde-with-str"] }
 serde = { version="1.0.139", features=["derive"] }
