@@ -31,11 +31,9 @@ use TransactionType::*;
 impl TryFrom<InputCsvRecord> for Transaction {
     type Error = Box<dyn Error>;
 
-    /// This is input validation.
-    /// I can wrap the AmountType into another struct type to use the type system to ensure it's always positive
-    /// and always has at most 4 decimal positions, but it's likely an overkill.
+    /// Validate input and convert it to the internal, type-safe representation.
     fn try_from(value: InputCsvRecord) -> Result<Self, Self::Error> {
-        let verify_amount = |amount: Option<AmountType>| -> Result<AmountType, Self::Error> {
+        let convert_amount = |amount: Option<AmountType>| -> Result<AmountType, Self::Error> {
             match amount {
                 None => Err(into_err(format!("{value:?}: no valid amount found"))),
                 Some(a) => {
@@ -53,8 +51,8 @@ impl TryFrom<InputCsvRecord> for Transaction {
             client: value.client,
             tx: value.tx,
             tx_type: match value.record_type.as_str() {
-                DEPOSIT => Deposit(verify_amount(value.amount)?),
-                WITHDRAWAL => Withdrawal(verify_amount(value.amount)?),
+                DEPOSIT => Deposit(convert_amount(value.amount)?),
+                WITHDRAWAL => Withdrawal(convert_amount(value.amount)?),
                 DISPUTE => Dispute,
                 RESOLVE => Resolve,
                 CHARGEBACK => Chargeback,
@@ -65,19 +63,19 @@ impl TryFrom<InputCsvRecord> for Transaction {
 }
 
 #[derive(Default, Debug, PartialEq)]
-pub struct ClientInfo {
+pub struct ClientState {
     pub available: AmountType,
     pub held: AmountType,
     pub locked: bool,
 }
 
-/// In my opinion, the laziness of an Iterator guarantees that this function process transactions
-/// as a stream. Data will not be loaded into memory as a whole at once. If a TcpStream's data rate is
+/// In my opinion, combining the Read trait with the laziness of Iterator guarantees that this function process transactions
+/// as a stream. Data will not be totally loaded into memory at once. If a TcpStream's data rate is
 /// low, this function should be synchronously blocked from time to time.
-pub fn process_transactions(
+pub fn process_transactions_and_return_client_states(
     transactions: impl IntoIterator<Item = Transaction>,
-) -> HashMap<ClientId, ClientInfo> {
-    let mut clients = HashMap::<ClientId, ClientInfo>::new();
+) -> HashMap<ClientId, ClientState> {
+    let mut clients = HashMap::<ClientId, ClientState>::new();
 
     type UnderDispute = bool;
     let mut deposit_transactions_seen =
@@ -87,8 +85,8 @@ pub fn process_transactions(
         let client = transaction.client;
         let tx = transaction.tx;
 
-        let client_info = clients.entry(client).or_default();
-        if client_info.locked {
+        let client_state = clients.entry(client).or_default();
+        if client_state.locked {
             eprintln!("{transaction:?} is ignored: client is locked");
             continue;
         }
@@ -96,13 +94,13 @@ pub fn process_transactions(
         match transaction.tx_type {
             Deposit(amount) => {
                 deposit_transactions_seen.insert(tx, (client, amount, false));
-                client_info.available += amount;
+                client_state.available += amount;
             }
             Withdrawal(amount) => {
-                if client_info.available < amount {
+                if client_state.available < amount {
                     eprintln!("{transaction:?} is ignored: not enough available funds");
                 } else {
-                    client_info.available -= amount;
+                    client_state.available -= amount;
                 }
             }
             Dispute => match deposit_transactions_seen.get_mut(&tx) {
@@ -115,11 +113,11 @@ pub fn process_transactions(
                     } else if client != deposit_client {
                         eprintln!("{transaction:?} is ignored: the client who files the dispute is different from the one who made the deposit");
                     } else {
-                        if client_info.available < deposit_amount {
+                        if client_state.available < deposit_amount {
                             eprintln!("{transaction:?} is ignored: can't file this dispute due to not enough available funds");
                         } else {
-                            client_info.available -= deposit_amount;
-                            client_info.held += deposit_amount;
+                            client_state.available -= deposit_amount;
+                            client_state.held += deposit_amount;
                             *deposit_under_dispute = true;
                         }
                     }
@@ -135,8 +133,8 @@ pub fn process_transactions(
                     } else if client != dispute_client {
                         eprintln!("{transaction:?} is ignored: the client who files the resolve is different from the one who filed the dispute");
                     } else {
-                        client_info.available += dispute_amount;
-                        client_info.held -= dispute_amount;
+                        client_state.available += dispute_amount;
+                        client_state.held -= dispute_amount;
                         *deposit_under_dispute = false;
                     }
                 }
@@ -151,8 +149,8 @@ pub fn process_transactions(
                     } else if client != dispute_client {
                         eprintln!("{transaction:?} is ignored: the client who files the chargeback is different from the one who filed the dispute");
                     } else {
-                        client_info.held -= dispute_amount;
-                        client_info.locked = true;
+                        client_state.held -= dispute_amount;
+                        client_state.locked = true;
                         deposit_transactions_seen.remove(&tx);
                     }
                 }
@@ -169,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_deposit_and_withdrawal() {
-        let clients = process_transactions([
+        let clients = process_transactions_and_return_client_states([
             Transaction {
                 client: 3,
                 tx: 2,
@@ -202,7 +200,7 @@ mod tests {
             [
                 (
                     3,
-                    ClientInfo {
+                    ClientState {
                         available: AmountType::from_str_exact("1.2457").unwrap(),
                         held: AmountType::ZERO,
                         locked: false,
@@ -210,7 +208,7 @@ mod tests {
                 ),
                 (
                     1,
-                    ClientInfo {
+                    ClientState {
                         available: AmountType::from_str_exact("10.3").unwrap(),
                         held: AmountType::ZERO,
                         locked: false,
@@ -224,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_dispute() {
-        let clients = process_transactions([
+        let clients = process_transactions_and_return_client_states([
             Transaction {
                 client: 3,
                 tx: 2,
@@ -267,7 +265,7 @@ mod tests {
             [
                 (
                     3,
-                    ClientInfo {
+                    ClientState {
                         available: AmountType::from_str_exact("0.3456").unwrap(),
                         held: AmountType::from_str_exact("5.4321").unwrap(),
                         locked: false,
@@ -275,7 +273,7 @@ mod tests {
                 ),
                 (
                     4,
-                    ClientInfo {
+                    ClientState {
                         available: AmountType::ZERO,
                         held: AmountType::ZERO,
                         locked: false,
@@ -289,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_resolve() {
-        let clients = process_transactions([
+        let clients = process_transactions_and_return_client_states([
             Transaction {
                 client: 3,
                 tx: 10,
@@ -327,7 +325,7 @@ mod tests {
             [
                 (
                     3,
-                    ClientInfo {
+                    ClientState {
                         available: AmountType::from_str_exact("5.4321").unwrap(),
                         held: AmountType::ZERO,
                         locked: false,
@@ -335,7 +333,7 @@ mod tests {
                 ),
                 (
                     4,
-                    ClientInfo {
+                    ClientState {
                         available: AmountType::ZERO,
                         held: AmountType::ZERO,
                         locked: false,
@@ -346,9 +344,10 @@ mod tests {
             .collect()
         );
     }
+
     #[test]
     fn test_chargeback() {
-        let clients = process_transactions([
+        let clients = process_transactions_and_return_client_states([
             Transaction {
                 client: 3,
                 tx: 10,
@@ -396,7 +395,7 @@ mod tests {
             [
                 (
                     3,
-                    ClientInfo {
+                    ClientState {
                         available: AmountType::ZERO,
                         held: AmountType::ZERO,
                         locked: true,
@@ -404,7 +403,7 @@ mod tests {
                 ),
                 (
                     4,
-                    ClientInfo {
+                    ClientState {
                         available: AmountType::ZERO,
                         held: AmountType::ZERO,
                         locked: false,

@@ -35,31 +35,31 @@ struct OutputCsvRecord {
 }
 
 /// Both a File and a TcpStream can be accepted.
-pub fn process_transactions_and_return_csv_result(
+pub fn process_csv_transactions_and_return_csv_client_states(
     csv_transaction_stream: impl Read,
 ) -> Result<String, Box<dyn Error>> {
     let iter_transactions = ReaderBuilder::new()
         .trim(Trim::All)
         .from_reader(csv_transaction_stream)
         .into_deserialize::<InputCsvRecord>()
-        .filter_map(|result| result.map_err(|e| eprintln!("Deserialize Error: {e}")).ok())
+        .filter_map(|result| result.map_err(|e| eprintln!("deserialize error: {e}")).ok())
         .filter_map(|record| {
             record
                 .try_into()
-                .map_err(|e| eprintln!("Validation Error: {e}"))
+                .map_err(|e| eprintln!("conversion (InputCsvRecord -> Transaction) error: {e}"))
                 .ok()
         });
 
-    let clients = inner::process_transactions(iter_transactions);
+    let clients = transaction_processing_logic::process_transactions_and_return_client_states(iter_transactions);
 
     let csv_output = {
         let mut writer = Writer::from_writer(Vec::new());
-        for output_record in clients.into_iter().map(|(id, info)| OutputCsvRecord {
-            client: id,
-            available: info.available,
-            held: info.held,
-            total: info.available + info.held,
-            locked: info.locked,
+        for output_record in clients.into_iter().map(|(client_id, client_state)| OutputCsvRecord {
+            client: client_id,
+            available: client_state.available,
+            held: client_state.held,
+            total: client_state.available + client_state.held,
+            locked: client_state.locked,
         }) {
             writer.serialize(output_record)?;
         }
@@ -69,4 +69,4 @@ pub fn process_transactions_and_return_csv_result(
     Ok(csv_output)
 }
 
-mod inner;
+mod transaction_processing_logic;
