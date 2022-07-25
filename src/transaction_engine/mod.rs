@@ -50,7 +50,9 @@ pub fn process_csv_transactions_and_return_csv_client_states(
                 .ok()
         });
 
-    let clients = transaction_processing_logic::process_transactions_and_return_client_states(iter_transactions);
+    let clients = transaction_processing_logic::process_transactions_and_return_client_states(
+        iter_transactions,
+    );
 
     let csv_output = {
         let mut writer = Writer::from_writer(Vec::new());

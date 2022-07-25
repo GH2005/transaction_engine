@@ -124,14 +124,12 @@ pub fn process_transactions_and_return_client_states(
                         eprintln!("{transaction:?} is ignored: already under dispute");
                     } else if client != deposit_client {
                         eprintln!("{transaction:?} is ignored: the client who files the dispute is different from the one who made the deposit");
+                    } else if client_state.available < deposit_amount {
+                        eprintln!("{transaction:?} is ignored: can't file this dispute due to not enough available funds");
                     } else {
-                        if client_state.available < deposit_amount {
-                            eprintln!("{transaction:?} is ignored: can't file this dispute due to not enough available funds");
-                        } else {
-                            client_state.available -= deposit_amount;
-                            client_state.held += deposit_amount;
-                            *deposit_under_dispute = true;
-                        }
+                        client_state.available -= deposit_amount;
+                        client_state.held += deposit_amount;
+                        *deposit_under_dispute = true;
                     }
                 }
             },
