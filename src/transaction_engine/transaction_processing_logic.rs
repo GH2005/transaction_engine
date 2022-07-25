@@ -1,4 +1,4 @@
-use super::{AmountType, ClientId, InputCsvRecord, TransactionId};
+use super::{AmountType, ClientId, InputCsvRecord, OutputCsvRecord, TransactionId};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
@@ -67,6 +67,18 @@ pub struct ClientState {
     pub available: AmountType,
     pub held: AmountType,
     pub locked: bool,
+}
+
+impl From<(ClientId, ClientState)> for OutputCsvRecord {
+    fn from((client_id, client_state): (ClientId, ClientState)) -> Self {
+        Self {
+            client: client_id,
+            available: client_state.available,
+            held: client_state.held,
+            total: client_state.available + client_state.held,
+            locked: client_state.locked,
+        }
+    }
 }
 
 /// In my opinion, combining the Read trait with the laziness of Iterator guarantees that this function process transactions

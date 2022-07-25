@@ -54,13 +54,7 @@ pub fn process_csv_transactions_and_return_csv_client_states(
 
     let csv_output = {
         let mut writer = Writer::from_writer(Vec::new());
-        for output_record in clients.into_iter().map(|(client_id, client_state)| OutputCsvRecord {
-            client: client_id,
-            available: client_state.available,
-            held: client_state.held,
-            total: client_state.available + client_state.held,
-            locked: client_state.locked,
-        }) {
+        for output_record in clients.into_iter().map(Into::<OutputCsvRecord>::into) {
             writer.serialize(output_record)?;
         }
         String::from_utf8(writer.into_inner()?)?
